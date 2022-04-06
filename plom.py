@@ -1216,21 +1216,6 @@ def _get_L(H, u, kde_bw_factor=1, method=2):
         shat = s / np.sqrt(s**2 + (N-1)/N)
         scaled_H = H * shat / s
         
-        dist_mat_list = np.asfortranarray(np.tile(scaled_H.T, (N, 1)) - 
-                        np.repeat(u.T, N, axis=0))
-        norms_list = np.exp((-1/(2*shat**2)) * 
-                     np.linalg.norm(dist_mat_list, axis=1)**2)
-        q_list = np.sum(np.reshape(norms_list, (N, N)), axis=1) / N
-        product = dist_mat_list * norms_list[:, None] / shat**2 / N
-        dq_list = np.sum(np.reshape(product, (N, N, -1)), axis=1)
-        pot = (dq_list / q_list[:,None]).T
-    
-    elif method==3: # joint KDE
-        nu, N = H.shape
-        s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
-        shat = s / np.sqrt(s**2 + (N-1)/N)
-        scaled_H = H * shat / s
-        
         dist_mat_list = [(scaled_H.T - x).T for x in u.T]
         
         norms_list = np.exp((-1/(2*shat**2)) * np.array(list(map(\
@@ -1242,6 +1227,23 @@ def _get_L(H, u, kde_bw_factor=1, method=2):
         
         dq_list = product/shat**2/N
         pot = (dq_list/q_list[:,None]).transpose()
+    
+    elif method==3: # joint KDE
+        nu, N = H.shape
+        s = (4 / (N*(2+nu))) ** (1/(nu+4))*kde_bw_factor
+        shat = s / np.sqrt(s**2 + (N-1)/N)
+        scaled_H = H * shat / s
+        
+        dist_mat_list = np.asfortranarray(np.tile(scaled_H.T, (N, 1)) - 
+                        np.repeat(u.T, N, axis=0))
+        norms_list = np.exp((-1/(2*shat**2)) * 
+                     np.linalg.norm(dist_mat_list, axis=1)**2)
+        q_list = np.sum(np.reshape(norms_list, (N, N)), axis=1) / N
+        product = dist_mat_list * norms_list[:, None] / shat**2 / N
+        dq_list = np.sum(np.reshape(product, (N, N, -1)), axis=1)
+        pot = (dq_list / q_list[:,None]).T
+    
+    
     
     elif method==4:    
         nu, N = H.shape
