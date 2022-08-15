@@ -397,7 +397,8 @@ def _pca(X, method='cum_energy', cumulative_energy=(1-1e-7),
     
     scale_evecs: bool, optional (default is True)
         If True, the principal components (eigenvectors of the covariance matrix
-        of X) are scaled by the inverse of the square root of the eigenvalues:
+        of X, onto which X is project) are scaled by the inverse of the square 
+        root of the eigenvalues:
         scaled_eigvecs = eigvecs / sqrt_eigvals
     
     verbose : bool, optional (default is True)
@@ -409,7 +410,16 @@ def _pca(X, method='cum_energy', cumulative_energy=(1-1e-7),
         Normalized data.
     
     scaled_eigvecs_inv : ndarray of shape (n_features, nu)
-        Eigenvectors scaled eigenvectors (to be used for denormalization).
+        Eigenvectors scaled by square root of eigenvalues (to be used for 
+        denormalization if 'scale_evecs' is True).
+    
+    scaled_eigvecs: ndarray of shape (n_features, nu)
+        Eigenvectors scaled by the inverse of the square root of the 
+        eigenvalues. Used for projection of X if 'scale_evecs' is True.
+    
+    eigvecs: ndarray of shape (n_features, nu)
+        Unscaled eigenvectors. Used for projection of X if 'scale_evecs' is 
+        False.
     
     means : ndarray of shape (n_features, )
         Means of the individual features.
