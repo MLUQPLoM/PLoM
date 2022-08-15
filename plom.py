@@ -28,6 +28,7 @@ def initialize(training=None,
                pca_cum_energy=1-1e-5,
                pca_eigv_cutoff=0,
                pca_dim=1,
+               pca_scale_evecs=True,
                
                dmaps=True,
                dmaps_epsilon='auto',
@@ -74,6 +75,7 @@ def initialize(training=None,
     options_dict['scaling_method']    = scaling_method
     options_dict['pca']               = pca   
     options_dict['pca_method']        = pca_method
+    options_dict['pca_scale_evecs']   = pca_scale_evecs
     options_dict['dmaps']             = dmaps
     options_dict['dmap_first_evec']   = dmaps_first_evec
     options_dict['dmaps_m_override']  = dmaps_m_override
@@ -99,7 +101,9 @@ def initialize(training=None,
     
     pca_dict = dict()
     pca_dict['training']         = None
-    pca_dict['inv_evecs']        = None
+    pca_dict['scaled_evecs_inv'] = None
+    pca_dict['scaled_evecs']     = None
+    pca_dict['evecs']            = None
     pca_dict['mean']             = None
     pca_dict['eigvals']          = None
     pca_dict['eigvals_trunc']    = None
@@ -391,6 +395,11 @@ def _pca(X, method='cum_energy', cumulative_energy=(1-1e-7),
         Used if method = 'pca_dim'.
         Specifies dimension (nu = pca_dim) to be used for the truncated basis.
     
+    scale_evecs: bool, optional (default is True)
+        If True, the principal components (eigenvectors of the covariance matrix
+        of X) are scaled by the inverse of the square root of the eigenvalues:
+        scaled_eigvecs = eigvecs / sqrt_eigvals
+    
     verbose : bool, optional (default is True)
         If True, print relevant information.
     
@@ -400,7 +409,7 @@ def _pca(X, method='cum_energy', cumulative_energy=(1-1e-7),
         Normalized data.
     
     scaled_eigvecs_inv : ndarray of shape (n_features, nu)
-        Scaled eigenvectors (to be used for denormalization).
+        Eigenvectors scaled eigenvectors (to be used for denormalization).
     
     means : ndarray of shape (n_features, )
         Means of the individual features.
@@ -457,22 +466,21 @@ def _pca(X, method='cum_energy', cumulative_energy=(1-1e-7),
     num_dropped_features = n - len(eigvals_trunc)
     eigvecs = eigvecs[:, num_dropped_features:]
     sqrt_eigvals = np.sqrt(eigvals_trunc)
-    if scale_evecs:
-        scaled_eigvecs = eigvecs / sqrt_eigvals
-        scaled_eigvecs_inv = eigvecs * sqrt_eigvals
-    else:
-        scaled_eigvecs = eigvecs
-        scaled_eigvecs_inv = eigvecs
+    scaled_eigvecs = eigvecs / sqrt_eigvals
+    scaled_eigvecs_inv = eigvecs * sqrt_eigvals
     
     # compute X_pca as wide matrix (then transpose); faster in later comps
-    X_pca = np.dot(scaled_eigvecs.T, X.T).T
+    if scale_evecs:
+        X_pca = np.dot(scaled_eigvecs.T, X.T).T
+    else:
+        X_pca = np.dot(eigvecs.T, X.T).T
     
     # compute X_pca as tall matrix; slower in later comps
     # X_pca = np.dot(X, scaled_eigvecs)
     
     if verbose:
         print("Output data dimensions:", X_pca.shape)
-    return (X_pca, scaled_eigvecs_inv, scaled_eigvecs, means, eigvals, 
+    return (X_pca, scaled_eigvecs_inv, scaled_eigvecs, eigvecs, means, eigvals, 
             eigvals_trunc)
 
 ###############################################################################
@@ -497,26 +505,29 @@ def pca(plom_dict):
     else:
         X = plom_dict['data']['training']
     
-    method  = plom_dict['options']['pca_method']
-    verbose = plom_dict['options']['verbose']
+    method      = plom_dict['options']['pca_method']
+    scale_evecs = plom_dict['options']['pca_scale_evecs']
+    verbose     = plom_dict['options']['verbose']
+    
     cumulative_energy  = plom_dict['input']['pca_cum_energy']
     eigenvalues_cutoff = plom_dict['input']['pca_eigv_cutoff']
     pca_dim            = plom_dict['input']['pca_dim']
     
-    X_pca, evecs_inv, _, means, evals, evals_trunc = _pca(X, method,
-                                                          cumulative_energy, 
-                                                          eigenvalues_cutoff,
-                                                          pca_dim,
-                                                          verbose=verbose)
+    (X_pca, scaled_evecs_inv, scaled_evecs, evecs, 
+    means, evals, evals_trunc) = _pca(X, method, cumulative_energy, 
+                                      eigenvalues_cutoff, pca_dim, scale_evecs,
+                                      verbose=verbose)
     
-    plom_dict['pca']['training']      = X_pca
-    plom_dict['pca']['inv_evecs']     = evecs_inv
-    plom_dict['pca']['mean']          = means
-    plom_dict['pca']['eigvals']       = evals
-    plom_dict['pca']['eigvals_trunc'] = evals_trunc
+    plom_dict['pca']['training']         = X_pca
+    plom_dict['pca']['scaled_evecs_inv'] = scaled_evecs_inv
+    plom_dict['pca']['scaled_evecs']     = scaled_evecs
+    plom_dict['pca']['evecs']            = evecs
+    plom_dict['pca']['mean']             = means
+    plom_dict['pca']['eigvals']          = evals
+    plom_dict['pca']['eigvals_trunc']    = evals_trunc
 
 ###############################################################################
-def _inverse_pca(X, scaled_eigvecs_inv, means):
+def _inverse_pca(X, eigvecs, means):
     """
     Project data set X from PCA space back to original data space.
 
@@ -526,8 +537,9 @@ def _inverse_pca(X, scaled_eigvecs_inv, means):
         Data set in PCA space (nu-dimensional) to be projected back to original
         data space (n_features-dimensional).
 
-    scaled_eigvecs_inv : ndarray of shape (n_features, nu)
-        Scaled eigenvectors.
+    eigvecs : ndarray of shape (n_features, nu)
+        Eigenvectors (principal components) onto which original data X was 
+        projected.
     
     means : ndarray of shape (n_features, )
         Means of the individual features.
@@ -538,7 +550,7 @@ def _inverse_pca(X, scaled_eigvecs_inv, means):
         Data set projected back to original n_features-dimensional space.
 
     """
-    X = np.dot(X, scaled_eigvecs_inv.T) + means    
+    X = np.dot(X, eigvecs.T) + means    
     return X
 
 ###############################################################################
@@ -557,7 +569,12 @@ def inverse_pca(plom_dict):
     None.
 
     """
-    eigvecs = plom_dict['pca']['inv_evecs']
+    scale_evecs = plom_dict['options']['pca_scale_evecs']
+    if scale_evecs:
+        eigvecs = plom_dict['pca']['scaled_evecs_inv']
+    else:
+        eigvecs = plom_dict['pca']['evecs']
+        
     mean    = plom_dict['pca']['mean']
     
     scaling = plom_dict['options']['scaling']
@@ -568,7 +585,7 @@ def inverse_pca(plom_dict):
         reconst_training = plom_dict['pca']['training']
     
     augmented = plom_dict['pca']['augmented']
-        
+    
     if reconst_training is not None:
         X = _inverse_pca(reconst_training, eigvecs, mean)
         if scaling:
